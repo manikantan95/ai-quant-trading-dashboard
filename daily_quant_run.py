@@ -48,18 +48,25 @@ def init_production_database():
         core_catalyst TEXT, predicted_direction TEXT NOT NULL, UNIQUE(prediction_date, ticker)
     )""")
     
+    # Added gain_percentage REAL to the schema
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS swing_trades (
         id INTEGER PRIMARY KEY AUTOINCREMENT, setup_date TEXT DEFAULT CURRENT_DATE, 
         run_timestamp TEXT NOT NULL, ticker TEXT, cap_class TEXT, time_horizon TEXT, 
         entry_price REAL, stop_loss REAL, target_price REAL, atr_at_entry REAL, 
         timeframe_days INTEGER, status TEXT DEFAULT 'ACTIVE', exit_date TEXT,
-        exit_price REAL, technical_weight_used REAL, sentiment_weight_used REAL
+        exit_price REAL, gain_percentage REAL, technical_weight_used REAL, sentiment_weight_used REAL
     )""")
+    
+    # Safety upgrade: If the table already exists from an older version, add the new column dynamically
+    try:
+        cursor.execute("ALTER TABLE swing_trades ADD COLUMN gain_percentage REAL")
+    except sqlite3.OperationalError:
+        pass # Column already exists, safe to ignore
+        
     conn.commit()
 
     # PULL HISTORY FROM GOOGLE SHEETS
-    # (Crucial for GitHub Actions so we don't overwrite the cloud database with an empty local run)
     print("☁️ Pulling historical memory from Google Sheets...")
     try:
         creds_json = os.environ.get('GCP_CREDENTIALS')
@@ -70,7 +77,6 @@ def init_production_database():
             ))
             sheet = client_gs.open("Quant_Fund_DB")
             
-            # Restore swing_trades
             try:
                 ws_swing = sheet.worksheet("swing_trades")
                 df_swing = get_as_dataframe(ws_swing).dropna(how='all')
@@ -78,7 +84,6 @@ def init_production_database():
                     df_swing.to_sql("swing_trades", conn, if_exists="replace", index=False)
             except Exception: pass
             
-            # Restore daily_predictions
             try:
                 ws_daily = sheet.worksheet("daily_predictions")
                 df_daily = get_as_dataframe(ws_daily).dropna(how='all')
@@ -244,8 +249,13 @@ def run_post_trade_audit():
             elif (today - dt.datetime.strptime(t['setup_date'], '%Y-%m-%d')).days > t['timeframe_days']: stat, exit_p = 'TIME_EXPIRED', float(df.iloc[-1]['close'])
 
             if stat != 'ACTIVE':
-                conn.execute("UPDATE swing_trades SET status=?, exit_date=?, exit_price=? WHERE id=?", (stat, today.strftime('%Y-%m-%d'), exit_p, t['id']))
-                print(f"  [{stat}] Closed {t['ticker']} at ₹{exit_p}")
+                # Calculate the exact gain percentage 
+                gain_pct = round(((exit_p - t['entry_price']) / t['entry_price']) * 100, 2)
+                
+                # Save the new status, exit price, and the gain percentage
+                conn.execute("UPDATE swing_trades SET status=?, exit_date=?, exit_price=?, gain_percentage=? WHERE id=?", 
+                             (stat, today.strftime('%Y-%m-%d'), exit_p, gain_pct, t['id']))
+                print(f"  [{stat}] Closed {t['ticker']} at ₹{exit_p} | Gain: {gain_pct}%")
         except: pass
     conn.commit()
     conn.close()
@@ -314,12 +324,23 @@ def allocate_multi_horizon_portfolio():
 def display_institutional_dashboard():
     conn = sqlite3.connect(DB_NAME)
     print("="*75 + "\n 📊 INSTITUTIONAL MULTI-HORIZON QUANT DASHBOARD \n" + "="*75)
+    
     print("\n🟢 ACTIVE POSITIONS:")
     df_act = pd.read_sql_query("SELECT time_horizon, setup_date, ticker, cap_class, entry_price, target_price, stop_loss FROM swing_trades WHERE status='ACTIVE' ORDER BY time_horizon", conn)
     print(df_act.to_string(index=False) if not df_act.empty else "No active positions.")
-    print("\n🏆 RECENT RESOLUTIONS:")
-    df_res = pd.read_sql_query("SELECT exit_date, time_horizon, ticker, status, exit_price FROM swing_trades WHERE status!='ACTIVE' ORDER BY exit_date DESC LIMIT 5", conn)
-    print(df_res.to_string(index=False) if not df_res.empty else "No resolved trades yet.\n" + "="*75)
+    
+    print("\n🏆 RECENT RESOLUTIONS (Including Gain %):")
+    # Added gain_percentage to the dashboard query
+    df_res = pd.read_sql_query("SELECT exit_date, time_horizon, ticker, status, exit_price, gain_percentage FROM swing_trades WHERE status!='ACTIVE' ORDER BY exit_date DESC LIMIT 5", conn)
+    
+    # Format the gain percentage nicely with a % sign if there is data
+    if not df_res.empty:
+        df_res['gain_percentage'] = df_res['gain_percentage'].apply(lambda x: f"{x}%" if pd.notnull(x) else "N/A")
+        print(df_res.to_string(index=False))
+    else:
+        print("No resolved trades yet.")
+        
+    print("\n" + "="*75)
     conn.close()
 
 # ==========================================
