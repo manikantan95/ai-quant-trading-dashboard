@@ -1,2 +1,11 @@
 streamlit
 st-gsheets-connection
+openai
+ta
+pandas
+requests
+feedparser
+tqdm
+gspread
+gspread-dataframe
+yfinance
