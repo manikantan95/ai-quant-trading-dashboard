@@ -1,0 +1,30 @@
+name: Daily Quant Fund Execution
+
+on:
+  schedule:
+    - cron: '30 2 * * 1-5' # Runs at 8:00 AM IST (Mon-Fri)
+  workflow_dispatch: # Allows manual testing
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute Master Script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        run: python daily_quant_run.py
