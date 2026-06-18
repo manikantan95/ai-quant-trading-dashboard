@@ -2,7 +2,7 @@ name: Daily Quant Fund Execution
 
 on:
   schedule:
-    - cron: '30 2 * * 1-5' # Runs at 8:00 AM IST (Mon-Fri)
+    - cron: '39 2 * * 1-5' # Runs at 8:00 AM IST (Mon-Fri)
   workflow_dispatch: # Allows manual testing
 
 jobs:
