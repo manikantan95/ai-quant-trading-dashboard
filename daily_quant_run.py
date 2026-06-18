@@ -81,6 +81,10 @@ def init_production_database():
                 ws_swing = sheet.worksheet("swing_trades")
                 df_swing = get_as_dataframe(ws_swing).dropna(how='all')
                 if not df_swing.empty:
+                    # FIX: Force the column to exist if the old Google Sheet doesn't have it yet!
+                    if 'gain_percentage' not in df_swing.columns:
+                        df_swing['gain_percentage'] = None
+                        
                     df_swing.to_sql("swing_trades", conn, if_exists="replace", index=False)
             except Exception: pass
             
@@ -157,7 +161,7 @@ def run_technical_agent(ticker, tech_row):
     return json.loads(res.choices[0].message.content)
 
 def run_sentiment_agent(ticker, news_text):
-    prompt = f"Analyze news for {ticker}:\n{news_text}\nRespond purely in JSON: {{'ticker': '{ticker}', 'sentiment_score': -1.0 to 1.0, 'market_impact': 'HIGH/MEDIUM/LOW', 'core_catalyst': '...', 'risk_factor': '...'}}"
+    prompt = f"Analyze news for {ticker}:\n{news_text}\nRespond purely in JSON: {{'ticker': '{ticker}', 'sentiment_score': -1.0 to 1.0, 'market_impact': 'HIGH/MEDIUM/LOW', 'core_catalyst': '...'}}"
     res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
     return json.loads(res.choices[0].message.content)
 
