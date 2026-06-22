@@ -11,8 +11,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=600)
 def load_cloud_data():
-    df_swing = conn.read(worksheet="swing_trades", usecols=list(range(14))) 
-    
+    df_swing = conn.read(worksheet="swing_trades")
     # Filter for dashboard views
     active = df_swing[df_swing['status'] == 'ACTIVE']
     history = df_swing[df_swing['status'] != 'ACTIVE']
