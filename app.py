@@ -1,23 +1,35 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+import json
 from openai import OpenAI
 
 st.set_page_config(page_title="AI Hedge Fund", page_icon="📈", layout="wide")
 st.title("🤖 Multi-Agent Quant Dashboard")
 
-# --- CLOUD DATABASE CONNECTION ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
+# --- SECURE CLOUD DATABASE CONNECTION ---
 @st.cache_data(ttl=600)
 def load_cloud_data():
-    df_swing = conn.read(worksheet="swing_trades")
-    # Filter for dashboard views
+    # 1. Use the VIP Master Key (GCP_CREDENTIALS)
+    creds_json = st.secrets["GCP_CREDENTIALS"]
+    client_gs = gspread.authorize(Credentials.from_service_account_info(
+        json.loads(creds_json), 
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    ))
+    
+    # 2. Open the spreadsheet securely bypassing all public link blocks
+    sheet = client_gs.open_by_url("https://docs.google.com/spreadsheets/d/1okyCzz15cThwRYOePRBynKZoIjuclzVdGy8nCJYpbFI/edit")
+    
+    # 3. Read the data
+    df_swing = pd.DataFrame(sheet.worksheet("swing_trades").get_all_records())
+    
+    # 4. Filter for dashboard views
     active = df_swing[df_swing['status'] == 'ACTIVE']
     history = df_swing[df_swing['status'] != 'ACTIVE']
     return active, history, df_swing
 
-# Pull data (retaining the full dataframe for LLM context analysis)
+# Execute the secure data pull
 df_active, df_history, df_full = load_cloud_data()
 
 # --- TOP METRICS ROW ---
@@ -57,29 +69,21 @@ st.divider()
 # --- AI CONVERSATIONAL TERMINAL ---
 st.subheader("💬 Query Your Quantitative Agent")
 
-# Format the current portfolio context cleanly as text for the LLM to read
 portfolio_context = df_full.to_string(index=False)
-
-# Initialize OpenAI client (Pulls from Streamlit Secrets)
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# Initialize session state for persistent chat history on screen
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display previous chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Accept user chat input
 if prompt := st.chat_input("Ask about active setups, recent performance, or system win rates..."):
-    # Display user message in chat message container
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Generate system architecture context prompt
     system_instruction = f"""
     You are an elite quantitative portfolio analyst assistant for a proprietary multi-agent swing trading fund.
     You have direct live read access to the complete database of historical and active positions.
@@ -90,7 +94,6 @@ if prompt := st.chat_input("Ask about active setups, recent performance, or syst
     Answer the user's queries professionally, using exact metrics, tickers, and price points from the data context where applicable.
     """
 
-    # Call OpenAI API
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -99,7 +102,6 @@ if prompt := st.chat_input("Ask about active setups, recent performance, or syst
         ]
     )
     
-    # Display assistant response in chat message container
     answer = response.choices[0].message.content
     with st.chat_message("assistant"):
         st.markdown(answer)
